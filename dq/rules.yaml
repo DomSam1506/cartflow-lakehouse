@@ -1,0 +1,41 @@
+events:
+  reject:
+    corrupt_record: true
+    not_null: [event_id, session_id, customer_unique_id, event_ts]
+    unique: [event_id]
+    allowed_values:
+      event_type: [page_view, add_to_cart, checkout_start, purchase]
+    valid_timestamp: [event_ts]
+    ts_range: {column: event_ts, min: "2016-01-01", max: "2019-01-01"}
+
+orders:
+  reject:
+    not_null: [order_id, customer_id, order_status, order_purchase_timestamp]
+    unique: [order_id]
+    allowed_values:
+      order_status: [delivered, shipped, canceled, unavailable, invoiced, processing, created, approved]
+    required_when:
+      - {column: order_delivered_customer_date, when_column: order_status, equals: delivered}
+  warn:
+    date_order:
+      - {earlier: order_approved_at, later: order_delivered_carrier_date}
+      - {earlier: order_delivered_carrier_date, later: order_delivered_customer_date}
+
+order_items:
+  reject:
+    not_null: [order_id, order_item_id, product_id, price]
+    positive: [price]
+
+order_payments:
+  reject:
+    not_null: [order_id, payment_type]
+  warn:
+    positive: [payment_value]
+    allowed_values:
+      payment_type: [credit_card, boleto, voucher, debit_card]
+
+order_reviews:
+  reject:
+    not_null: [review_id, order_id]
+    allowed_values:
+      review_score: [1, 2, 3, 4, 5]

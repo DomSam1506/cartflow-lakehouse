@@ -70,8 +70,8 @@ delivery date**), delivered 8/96,478.
 | Check | Result | Severity |
 |---|---|---|
 | Duplicate keys: orders, order_items, payments, products, sellers | 0 | Clean |
-| Duplicate `review_id` | 814 extra rows | **Defect**, dedup |
-| Orders with more than one review | 547 | Keep latest by `review_answer_timestamp` |
+| Same `review_id` on different orders | 814 extra rows (no exact duplicate rows) | `review_id` is not unique. Key is (`review_id`, `order_id`) |
+| Orders with more than one review | 547 | Keep latest by `review_answer_timestamp` (gold layer decision) |
 | Orders with no review | about 768 | Normal |
 | Delivered before purchase / approved before purchase | 0 / 0 | Clean |
 | Carrier pickup before approval | 1,359 (1.4%) | Warn only (real orders) |
@@ -112,7 +112,7 @@ Business baseline: 8.11% of delivered orders (7,826 of 96,478) arrived after the
 | Delivery nulls are expected for non-delivered statuses | DQ rule: delivery date required only when status = `delivered` |
 | 8 delivered orders with no date | Quarantine with reason `delivered_missing_delivery_date` |
 | 1,359 orders with carrier before approval | Warn and keep. Rejecting 1.4% of real orders would distort revenue |
-| Duplicate `review_id`, multiple reviews per order | Dedupe on `review_id`, keep latest review per order for the fact table |
+| `review_id` repeats across orders (814 rows) | Treat (`review_id`, `order_id`) as the key. Never dedupe on `review_id` alone |
 | 1M geolocation rows, 19K zips | Aggregate to one centroid per zip prefix before loading `dim_geo` |
 | 2 untranslated categories | Maintain a small mapping seed file for them |
 | Data sparse outside 2017-2018 | Replay only 2017-11-20 to 2017-11-30 |
