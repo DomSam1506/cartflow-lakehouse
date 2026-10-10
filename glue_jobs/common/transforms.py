@@ -2,10 +2,10 @@ from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 
 
-def dedupe(df: DataFrame, key: str) -> DataFrame:
-    """Drop repeated rows that share the same key (keeps one arbitrary row per key)."""
-    return df.dropDuplicates([key])
-
+def dedupe(df: DataFrame, key) -> DataFrame:
+    """Drop repeated rows sharing the same key (a column name or a list of names)."""
+    keys = [key] if isinstance(key, str) else list(key)
+    return df.dropDuplicates(keys)
 
 def parse_ts(df: DataFrame, col: str) -> DataFrame:
     """Parse a string timestamp column. Keeps the original text in <col>_raw so a failed
