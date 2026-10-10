@@ -7,6 +7,7 @@ Defects are injected AFTER generation so the quality gates have something to cat
 
     python generator/gen_events.py --start 2017-11-20 --end 2017-11-30
 """
+
 import argparse
 import gzip
 import json
@@ -21,8 +22,10 @@ FUNNEL = ["page_view", "add_to_cart", "checkout_start", "purchase"]
 DEVICES = ["mobile", "desktop", "tablet"]
 DEVICE_P = [0.60, 0.35, 0.05]
 # relative traffic by hour of day (night low, evening peak)
-HOUR_W = np.array([1, 1, 1, 1, 1, 2, 3, 4, 5, 6, 7, 7,
-                   7, 7, 7, 7, 7, 8, 8, 9, 9, 8, 5, 2], dtype=float)
+HOUR_W = np.array(
+    [1, 1, 1, 1, 1, 2, 3, 4, 5, 6, 7, 7, 7, 7, 7, 7, 7, 8, 8, 9, 9, 8, 5, 2],
+    dtype=float,
+)
 HOUR_P = HOUR_W / HOUR_W.sum()
 
 
@@ -69,12 +72,20 @@ def load_inputs(src, start, end):
         where o.order_purchase_timestamp >= '{start}'
           and o.order_purchase_timestamp <  date '{end}' + interval 1 day
         order by o.order_purchase_timestamp""").df()
-    customers = con.sql(
-        f"select distinct customer_unique_id from '{src}/olist_customers_dataset.csv'"
-    ).df()["customer_unique_id"].to_numpy()
-    products = con.sql(
-        f"select distinct product_id from '{src}/olist_order_items_dataset.csv'"
-    ).df()["product_id"].to_numpy()
+    customers = (
+        con.sql(
+            f"select distinct customer_unique_id from '{src}/olist_customers_dataset.csv'"
+        )
+        .df()["customer_unique_id"]
+        .to_numpy()
+    )
+    products = (
+        con.sql(
+            f"select distinct product_id from '{src}/olist_order_items_dataset.csv'"
+        )
+        .df()["product_id"]
+        .to_numpy()
+    )
     return orders, customers, products
 
 
@@ -84,10 +95,21 @@ def generate(orders, customers, products, browse_ratio, rng):
 
     # 1) one converting session per real order
     for r in orders.itertuples(index=False):
-        product = r.product_id if isinstance(r.product_id, str) else rng.choice(products)
+        product = (
+            r.product_id if isinstance(r.product_id, str) else rng.choice(products)
+        )
         device = rng.choice(DEVICES, p=DEVICE_P)
-        events.extend(session_events(rng, new_id(rng), r.customer_unique_id, product,
-                                     device, 4, end_ts=pd.Timestamp(r.purchase_ts)))
+        events.extend(
+            session_events(
+                rng,
+                new_id(rng),
+                r.customer_unique_id,
+                product,
+                device,
+                4,
+                end_ts=pd.Timestamp(r.purchase_ts),
+            )
+        )
         sessions += 1
 
     # 2) per day: browse_ratio x as many non-converting sessions
@@ -98,9 +120,17 @@ def generate(orders, customers, products, browse_ratio, rng):
         for h in hours:
             start = day + pd.Timedelta(hours=int(h), seconds=int(rng.integers(0, 3600)))
             stages = int(rng.choice([1, 2, 3], p=[0.70, 0.22, 0.08]))
-            events.extend(session_events(
-                rng, new_id(rng), rng.choice(customers), rng.choice(products),
-                rng.choice(DEVICES, p=DEVICE_P), stages, start_ts=start))
+            events.extend(
+                session_events(
+                    rng,
+                    new_id(rng),
+                    rng.choice(customers),
+                    rng.choice(products),
+                    rng.choice(DEVICES, p=DEVICE_P),
+                    stages,
+                    start_ts=start,
+                )
+            )
             sessions += 1
     return pd.DataFrame(events), sessions
 
@@ -147,8 +177,10 @@ def write_partitions(df, out):
         d = out / f"dt={day.date()}"
         d.mkdir(parents=True, exist_ok=True)
         rows = g.drop(columns="file_day").to_dict("records")
-        with open(d / "part-0.json.gz", "wb") as raw, \
-                gzip.GzipFile(fileobj=raw, mode="wb", mtime=0) as gz:  # mtime=0: deterministic bytes
+        with (
+            open(d / "part-0.json.gz", "wb") as raw,
+            gzip.GzipFile(fileobj=raw, mode="wb", mtime=0) as gz,
+        ):  # mtime=0: deterministic bytes
             for row in rows:
                 gz.write((json.dumps(row) + "\n").encode())
 
@@ -159,8 +191,12 @@ def main():
     ap.add_argument("--out", default="data/generated/events")
     ap.add_argument("--start", default="2017-11-20")
     ap.add_argument("--end", default="2017-11-30")
-    ap.add_argument("--browse-ratio", type=float, default=30.0,
-                    help="non-converting sessions per real order")
+    ap.add_argument(
+        "--browse-ratio",
+        type=float,
+        default=30.0,
+        help="non-converting sessions per real order",
+    )
     ap.add_argument("--seed", type=int, default=42)
     a = ap.parse_args()
 
@@ -171,7 +207,9 @@ def main():
     write_partitions(dirty, a.out)
 
     # ---- sanity check ----
-    print(f"\nwindow {a.start}..{a.end}: {len(orders):,} real orders, {sessions:,} sessions")
+    print(
+        f"\nwindow {a.start}..{a.end}: {len(orders):,} real orders, {sessions:,} sessions"
+    )
     print("\nfunnel (clean events):")
     f = clean["event_type"].value_counts().reindex(FUNNEL)
     for stage, c in f.items():
