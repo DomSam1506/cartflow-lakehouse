@@ -10,6 +10,7 @@ Layout produced (local: data/local_lake/raw/, s3: bucket root + --prefix):
     dt=2017-11-24/events/part-0.json.gz
     dt=2017-11-24/_READY
 """
+
 import argparse
 import shutil
 from pathlib import Path
@@ -31,11 +32,15 @@ def staged_days(tables_dir, events_dir):
 def replay(day, a):
     files = list(day_files(day, Path(a.tables), Path(a.events)))
     if not files:
-        raise SystemExit(f"nothing staged for {day}; run slice_tables.py / gen_events.py first")
+        raise SystemExit(
+            f"nothing staged for {day}; run slice_tables.py / gen_events.py first"
+        )
 
     if a.target == "local":
         root = Path(a.lake) / "raw"
-        shutil.rmtree(root / f"dt={day}", ignore_errors=True)  # re-run = clean overwrite
+        shutil.rmtree(
+            root / f"dt={day}", ignore_errors=True
+        )  # re-run = clean overwrite
         for key, path in files:
             dest = root / key
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -43,12 +48,15 @@ def replay(day, a):
         (root / f"dt={day}" / "_READY").touch()  # LAST
     else:
         import boto3  # only needed for the S3 target
+
         if not a.bucket:
             raise SystemExit("--bucket is required for --target s3")
         s3 = boto3.client("s3")
         for key, path in files:
             s3.upload_file(str(path), a.bucket, a.prefix + key)
-        s3.put_object(Bucket=a.bucket, Key=f"{a.prefix}dt={day}/_READY", Body=b"")  # LAST
+        s3.put_object(
+            Bucket=a.bucket, Key=f"{a.prefix}dt={day}/_READY", Body=b""
+        )  # LAST
     print(f"{day}: {len(files)} files + _READY -> {a.target}")
 
 
@@ -59,7 +67,9 @@ def main():
     g.add_argument("--all", action="store_true")
     ap.add_argument("--target", choices=["local", "s3"], default="local")
     ap.add_argument("--bucket")
-    ap.add_argument("--prefix", default="", help="optional key prefix for s3, e.g. 'raw/'")
+    ap.add_argument(
+        "--prefix", default="", help="optional key prefix for s3, e.g. 'raw/'"
+    )
     ap.add_argument("--lake", default="data/local_lake")
     ap.add_argument("--tables", default="data/generated/tables")
     ap.add_argument("--events", default="data/generated/events")

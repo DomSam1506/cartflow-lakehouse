@@ -30,6 +30,7 @@ class DynamoWatermarks:
 
     def __init__(self, table="cartflow-watermarks"):
         import boto3
+
         self.t = boto3.resource("dynamodb").Table(table)
 
     def get(self, table):

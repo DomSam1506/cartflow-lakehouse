@@ -1,7 +1,8 @@
 """Clean one day of raw data: read -> flag bad rows -> UTC -> write clean + quarantine.
 
-    python -m glue_jobs.clean_daily --dt 2017-11-24
+python -m glue_jobs.clean_daily --dt 2017-11-24
 """
+
 import argparse
 import os
 import shutil
@@ -21,13 +22,16 @@ DEDUPE_KEYS = {"order_reviews": ["review_id", "order_id"]}
 
 
 def build_spark():
-    return (SparkSession.builder.master("local[2]").appName("cartflow-clean")
-            .config("spark.sql.session.timeZone", "UTC")
-            .config("spark.sql.sources.partitionOverwriteMode", "dynamic")
-            .config("spark.sql.shuffle.partitions", "4")
-            .config("spark.driver.bindAddress", "127.0.0.1")
-            .config("spark.driver.host", "127.0.0.1")
-            .getOrCreate())
+    return (
+        SparkSession.builder.master("local[2]")
+        .appName("cartflow-clean")
+        .config("spark.sql.session.timeZone", "UTC")
+        .config("spark.sql.sources.partitionOverwriteMode", "dynamic")
+        .config("spark.sql.shuffle.partitions", "4")
+        .config("spark.driver.bindAddress", "127.0.0.1")
+        .config("spark.driver.host", "127.0.0.1")
+        .getOrCreate()
+    )
 
 
 def prepare(df, name):
@@ -67,12 +71,14 @@ def process_table(spark, name, dt, src, lake_dir, rules, watermarks):
         valid = dedupe(valid, DEDUPE_KEYS[name])
         dups_dropped = before - valid.count()
 
-    valid = (valid.drop(*[c for c in HELPER_COLS if c in valid.columns])
-                  .withColumn("ingest_dt", F.lit(dt)).cache())
+    valid = (
+        valid.drop(*[c for c in HELPER_COLS if c in valid.columns])
+        .withColumn("ingest_dt", F.lit(dt))
+        .cache()
+    )
     bad = bad.withColumn("ingest_dt", F.lit(dt))
 
-    warned = (valid.filter("dq_warn != ''").count()
-              if "dq_warn" in valid.columns else 0)
+    warned = valid.filter("dq_warn != ''").count() if "dq_warn" in valid.columns else 0
     summary = summarize(name, total, bad)
 
     clean_n = write_partition(valid, os.path.join(lake_dir, "clean", name), dt)
@@ -81,13 +87,21 @@ def process_table(spark, name, dt, src, lake_dir, rules, watermarks):
     # Only now, after BOTH writes succeeded, move the watermark.
     moved = advance(watermarks, name, dt)
 
-    summary.update(clean=clean_n, warned=warned, dups_dropped=dups_dropped,
-                   watermark_moved=moved)
+    summary.update(
+        clean=clean_n, warned=warned, dups_dropped=dups_dropped, watermark_moved=moved
+    )
     return summary
 
 
-def run(spark, dt, raw_dir="data/local_lake/raw", lake_dir="data/local_lake",
-        rules_path="dq/rules.yaml", watermarks=None, tables=None):
+def run(
+    spark,
+    dt,
+    raw_dir="data/local_lake/raw",
+    lake_dir="data/local_lake",
+    rules_path="dq/rules.yaml",
+    watermarks=None,
+    tables=None,
+):
     spark.conf.set("spark.sql.sources.partitionOverwriteMode", "dynamic")
     rules = load_rules(rules_path)
     watermarks = watermarks or LocalWatermarks()
@@ -115,10 +129,14 @@ def main():
     results = run(spark, a.dt, a.raw, a.lake, watermarks=LocalWatermarks(a.watermarks))
 
     print(f"\n=== clean_daily {a.dt} ===")
-    print(f"{'table':<36}{'total':>8}{'clean':>8}{'quarantined':>13}{'pct':>8}{'warned':>8}")
+    print(
+        f"{'table':<36}{'total':>8}{'clean':>8}{'quarantined':>13}{'pct':>8}{'warned':>8}"
+    )
     for r in results:
-        print(f"{r['table']:<36}{r['total']:>8,}{r['clean']:>8,}"
-              f"{r['quarantined']:>13,}{r['pct']:>7.2f}%{r['warned']:>8,}")
+        print(
+            f"{r['table']:<36}{r['total']:>8,}{r['clean']:>8,}"
+            f"{r['quarantined']:>13,}{r['pct']:>7.2f}%{r['warned']:>8,}"
+        )
         if r["by_reason"]:
             print(f"    reasons: {r['by_reason']}")
         if r["dups_dropped"]:
