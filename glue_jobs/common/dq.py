@@ -1,11 +1,11 @@
 import yaml
 from pyspark.sql import DataFrame, Window
 from pyspark.sql import functions as F
+from glue_jobs.common import storage
 
 
 def load_rules(path: str = "dq/rules.yaml") -> dict:
-    with open(path) as f:
-        return yaml.safe_load(f)
+    return yaml.safe_load(storage.read_text(path))
 
 
 def _flag(df: DataFrame, block: dict | None, out_col: str) -> DataFrame:
