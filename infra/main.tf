@@ -1,20 +1,30 @@
 
 terraform {
   required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-    random = {
-      source  = "hashicorp/random"
-      version = "~> 3.0"
-    }
+    aws     = { source = "hashicorp/aws", version = "~> 5.0" }
+    random  = { source = "hashicorp/random" }
+    archive = { source = "hashicorp/archive" }
   }
 }
-provider "aws" { region = "us-east-2" }
+
+provider "aws" {
+  region = "us-east-2"
+}
+
+data "aws_caller_identity" "current" {}
+data "aws_region" "current" {}
 
 resource "random_id" "suffix" { byte_length = 3 }
-locals { p = "cartflow-${random_id.suffix.hex}" }
+
+locals {
+  account_id = data.aws_caller_identity.current.account_id
+  region     = data.aws_region.current.name
+  job_name   = "cartflow-clean-daily"
+  p          = "cartflow-${random_id.suffix.hex}"
+}
+
+
+locals {}
 
 resource "aws_s3_bucket" "zones" {
   for_each      = toset(["raw", "clean", "gold", "quarantine", "scripts", "athena-results"])
