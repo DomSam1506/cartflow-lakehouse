@@ -1,17 +1,23 @@
 """Generate Athena DDL (partition projection, no crawlers) from the Spark schemas.
 
-    python scripts/make_athena_ddl.py --clean-bucket <clean> --quarantine-bucket <quarantine>
+python scripts/make_athena_ddl.py --clean-bucket <clean> --quarantine-bucket <quarantine>
 """
+
 import argparse
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo root, so glue_jobs imports work
+sys.path.insert(
+    0, str(Path(__file__).resolve().parents[1])
+)  # repo root, so glue_jobs imports work
 
-from glue_jobs.common.dq import load_rules  # noqa: E402
-from glue_jobs.common.schema import EVENTS_SCHEMA, SCHEMAS  # noqa: E402
+from glue_jobs.common.dq import load_rules
+from glue_jobs.common.schema import EVENTS_SCHEMA, SCHEMAS
 
-START, END = "2017-11-01", "2017-12-31"  # projection range: widen if you replay other dates
+START, END = (
+    "2017-11-01",
+    "2017-12-31",
+)  # projection range: widen if you replay other dates
 
 
 def columns(table, quarantine, has_rules):
@@ -21,7 +27,11 @@ def columns(table, quarantine, has_rules):
         if f.name == "_corrupt_record":
             continue
         # events: event_ts is read as a string but written to clean as a timestamp
-        kind = "timestamp" if (table == "events" and f.name == "event_ts") else f.dataType.simpleString()
+        kind = (
+            "timestamp"
+            if (table == "events" and f.name == "event_ts")
+            else f.dataType.simpleString()
+        )
         cols.append((f.name, kind))
     if quarantine and table == "events":
         cols += [("event_ts_raw", "string"), ("_corrupt_record", "string")]
@@ -64,10 +74,24 @@ def main():
     for table in ["events", *SCHEMAS]:
         has_rules = table in rules
         (out / f"clean_{table}.sql").write_text(
-            ddl(a.db, f"clean_{table}", columns(table, False, has_rules), a.clean_bucket, table))
+            ddl(
+                a.db,
+                f"clean_{table}",
+                columns(table, False, has_rules),
+                a.clean_bucket,
+                table,
+            )
+        )
         if has_rules:  # only tables with rules can have quarantined rows
             (out / f"quarantine_{table}.sql").write_text(
-                ddl(a.db, f"quarantine_{table}", columns(table, True, True), a.quarantine_bucket, table))
+                ddl(
+                    a.db,
+                    f"quarantine_{table}",
+                    columns(table, True, True),
+                    a.quarantine_bucket,
+                    table,
+                )
+            )
         print("wrote", table)
 
 

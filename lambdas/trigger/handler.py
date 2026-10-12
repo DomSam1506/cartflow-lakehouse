@@ -21,8 +21,11 @@ def handler(event, _ctx):
         if not m:
             print(f"ignoring {key}")
             continue
-        run = glue.start_job_run(JobName=os.environ["JOB_NAME"],
-                                 Arguments={"--dt": m.group(1)})
-        print(f"started {os.environ['JOB_NAME']} run {run['JobRunId']} for dt={m.group(1)}")
+        run = glue.start_job_run(
+            JobName=os.environ["JOB_NAME"], Arguments={"--dt": m.group(1)}
+        )
+        print(
+            f"started {os.environ['JOB_NAME']} run {run['JobRunId']} for dt={m.group(1)}"
+        )
         started.append(m.group(1))
     return {"started": started}
