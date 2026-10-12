@@ -35,8 +35,13 @@ def test_url_encoded_key_from_s3_is_decoded(glue):
 
 
 def test_data_files_and_lookalikes_are_ignored(glue):
-    h.handler(event("dt=2017-11-20/orders/part-0.csv.gz",
-                    "raw/dt=2017-11-20/_READY",
-                    "dt=2017-11-20/_READY.tmp",
-                    "dt=17-11-20/_READY"), None)
+    h.handler(
+        event(
+            "dt=2017-11-20/orders/part-0.csv.gz",
+            "raw/dt=2017-11-20/_READY",
+            "dt=2017-11-20/_READY.tmp",
+            "dt=17-11-20/_READY",
+        ),
+        None,
+    )
     assert glue.calls == []

@@ -1,4 +1,5 @@
 """Tiny storage helpers so the job runs on local folders and on s3:// URIs."""
+
 import os
 import shutil
 
@@ -8,7 +9,7 @@ def is_s3(path: str) -> bool:
 
 
 def split_s3(uri: str):
-    bucket, _, key = uri[len("s3://"):].partition("/")
+    bucket, _, key = uri[len("s3://") :].partition("/")
     return bucket, key
 
 
@@ -27,7 +28,9 @@ def exists_dir(path: str) -> bool:
     if not is_s3(path):
         return os.path.isdir(path)
     bucket, key = split_s3(path)
-    resp = _client().list_objects_v2(Bucket=bucket, Prefix=key.rstrip("/") + "/", MaxKeys=1)
+    resp = _client().list_objects_v2(
+        Bucket=bucket, Prefix=key.rstrip("/") + "/", MaxKeys=1
+    )
     return resp.get("KeyCount", 0) > 0
 
 
@@ -41,7 +44,9 @@ def delete_prefix(path: str) -> None:
     bucket, key = split_s3(path)
     if not key.strip("/"):
         raise ValueError("refusing to delete a whole bucket")
-    prefix = key.rstrip("/") + "/"  # trailing slash: ingest_dt=2017-11-2 must not match ...24
+    prefix = (
+        key.rstrip("/") + "/"
+    )  # trailing slash: ingest_dt=2017-11-2 must not match ...24
     client, token = _client(), None
     while True:
         kwargs = {"Bucket": bucket, "Prefix": prefix}
@@ -50,7 +55,9 @@ def delete_prefix(path: str) -> None:
         resp = client.list_objects_v2(**kwargs)
         objects = [{"Key": o["Key"]} for o in resp.get("Contents", [])]
         if objects:
-            client.delete_objects(Bucket=bucket, Delete={"Objects": objects, "Quiet": True})
+            client.delete_objects(
+                Bucket=bucket, Delete={"Objects": objects, "Quiet": True}
+            )
         if not resp.get("IsTruncated"):
             return
         token = resp["NextContinuationToken"]

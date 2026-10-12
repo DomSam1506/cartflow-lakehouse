@@ -15,8 +15,11 @@ class FakeS3:
             ks = [k for k in ks if k > ContinuationToken]
         limit = min(MaxKeys, self.page)
         chunk, more = ks[:limit], len(ks) > limit
-        resp = {"KeyCount": len(chunk), "Contents": [{"Key": k} for k in chunk],
-                "IsTruncated": more}
+        resp = {
+            "KeyCount": len(chunk),
+            "Contents": [{"Key": k} for k in chunk],
+            "IsTruncated": more,
+        }
         if more:
             resp["NextContinuationToken"] = chunk[-1]
         return resp
@@ -29,8 +32,10 @@ class FakeS3:
 @pytest.fixture
 def s3(monkeypatch):
     keys = [f"clean/events/ingest_dt=2017-11-24/part-{i}.parquet" for i in range(5)]
-    keys += ["clean/events/ingest_dt=2017-11-25/part-0.parquet",
-             "clean/events/ingest_dt=2017-11-240/part-0.parquet"]
+    keys += [
+        "clean/events/ingest_dt=2017-11-25/part-0.parquet",
+        "clean/events/ingest_dt=2017-11-240/part-0.parquet",
+    ]
     fake = FakeS3(keys)
     monkeypatch.setattr(storage, "_client", lambda: fake)
     return fake
@@ -49,8 +54,10 @@ def test_exists_dir_s3_matches_whole_folder_names_only(s3):
 
 def test_delete_prefix_s3_pages_through_and_spares_neighbours(s3):
     storage.delete_prefix("s3://b/clean/events/ingest_dt=2017-11-24/")
-    assert s3.keys == ["clean/events/ingest_dt=2017-11-240/part-0.parquet",
-                       "clean/events/ingest_dt=2017-11-25/part-0.parquet"]
+    assert s3.keys == [
+        "clean/events/ingest_dt=2017-11-240/part-0.parquet",
+        "clean/events/ingest_dt=2017-11-25/part-0.parquet",
+    ]
 
 
 def test_delete_prefix_refuses_whole_bucket(s3):

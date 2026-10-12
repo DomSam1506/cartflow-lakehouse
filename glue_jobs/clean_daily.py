@@ -4,6 +4,7 @@ Locally:   python -m glue_jobs.clean_daily --dt 2017-11-24
 On Glue:   glue_entry.py calls main(); Terraform supplies the arguments.
 Paths may be local folders or s3:// URIs.
 """
+
 import argparse
 
 from pyspark.sql import SparkSession
@@ -31,11 +32,15 @@ def configure(spark):
 def build_spark(env="local"):
     builder = SparkSession.builder.appName("cartflow-clean")
     if env == "local":
-        builder = (builder.master("local[2]")
-                   .config("spark.sql.shuffle.partitions", "4")
-                   .config("spark.driver.bindAddress", "127.0.0.1")
-                   .config("spark.driver.host", "127.0.0.1"))
-    spark = builder.getOrCreate()  # on Glue this returns the session Glue already started
+        builder = (
+            builder.master("local[2]")
+            .config("spark.sql.shuffle.partitions", "4")
+            .config("spark.driver.bindAddress", "127.0.0.1")
+            .config("spark.driver.host", "127.0.0.1")
+        )
+    spark = (
+        builder.getOrCreate()
+    )  # on Glue this returns the session Glue already started
     configure(spark)
     return spark
 
@@ -77,12 +82,14 @@ def process_table(spark, name, dt, src, clean_dir, quarantine_dir, rules, waterm
         valid = dedupe(valid, DEDUPE_KEYS[name])
         dups_dropped = before - valid.count()
 
-    valid = (valid.drop(*[c for c in HELPER_COLS if c in valid.columns])
-                  .withColumn("ingest_dt", F.lit(dt)).cache())
+    valid = (
+        valid.drop(*[c for c in HELPER_COLS if c in valid.columns])
+        .withColumn("ingest_dt", F.lit(dt))
+        .cache()
+    )
     bad = bad.withColumn("ingest_dt", F.lit(dt))
 
-    warned = (valid.filter("dq_warn != ''").count()
-              if "dq_warn" in valid.columns else 0)
+    warned = valid.filter("dq_warn != ''").count() if "dq_warn" in valid.columns else 0
     summary = summarize(name, total, bad)
 
     clean_n = write_partition(valid, storage.join(clean_dir, name), dt)
@@ -91,14 +98,23 @@ def process_table(spark, name, dt, src, clean_dir, quarantine_dir, rules, waterm
     # Only now, after BOTH writes succeeded, move the watermark.
     moved = advance(watermarks, name, dt)
 
-    summary.update(clean=clean_n, warned=warned, dups_dropped=dups_dropped,
-                   watermark_moved=moved)
+    summary.update(
+        clean=clean_n, warned=warned, dups_dropped=dups_dropped, watermark_moved=moved
+    )
     return summary
 
 
-def run(spark, dt, raw_dir="data/local_lake/raw", lake_dir="data/local_lake",
-        rules_path="dq/rules.yaml", watermarks=None, tables=None,
-        clean_dir=None, quarantine_dir=None):
+def run(
+    spark,
+    dt,
+    raw_dir="data/local_lake/raw",
+    lake_dir="data/local_lake",
+    rules_path="dq/rules.yaml",
+    watermarks=None,
+    tables=None,
+    clean_dir=None,
+    quarantine_dir=None,
+):
     configure(spark)
     clean_dir = clean_dir or storage.join(lake_dir, "clean")
     quarantine_dir = quarantine_dir or storage.join(lake_dir, "quarantine")
@@ -110,8 +126,11 @@ def run(spark, dt, raw_dir="data/local_lake/raw", lake_dir="data/local_lake",
         if not storage.exists_dir(src):
             print(f"{dt} {name}: not in this day's drop, skipping")
             continue
-        results.append(process_table(spark, name, dt, src, clean_dir, quarantine_dir,
-                                     rules, watermarks))
+        results.append(
+            process_table(
+                spark, name, dt, src, clean_dir, quarantine_dir, rules, watermarks
+            )
+        )
         spark.catalog.clearCache()
     return results
 
@@ -126,10 +145,19 @@ def parse_args(argv=None):
     ap.add_argument("--CLEAN_URI", "--clean", dest="clean")
     ap.add_argument("--QUARANTINE_URI", "--quarantine", dest="quarantine")
     ap.add_argument("--RULES_PATH", "--rules", dest="rules", default="dq/rules.yaml")
-    ap.add_argument("--WATERMARK_BACKEND", "--watermark-backend", dest="wm_backend",
-                    choices=["local", "dynamo"], default="local")
-    ap.add_argument("--WATERMARK_TABLE", "--watermark-table", dest="wm_table",
-                    default="cartflow-watermarks")
+    ap.add_argument(
+        "--WATERMARK_BACKEND",
+        "--watermark-backend",
+        dest="wm_backend",
+        choices=["local", "dynamo"],
+        default="local",
+    )
+    ap.add_argument(
+        "--WATERMARK_TABLE",
+        "--watermark-table",
+        dest="wm_table",
+        default="cartflow-watermarks",
+    )
     ap.add_argument("--watermarks", default="data/local_watermarks.json")
     return ap.parse_known_args(argv)[0]
 
@@ -139,19 +167,32 @@ def main(argv=None):
     spark = build_spark(a.env)
     if a.env == "local":
         spark.sparkContext.setLogLevel("ERROR")
-    wm = (DynamoWatermarks(a.wm_table) if a.wm_backend == "dynamo"
-          else LocalWatermarks(a.watermarks))
+    wm = (
+        DynamoWatermarks(a.wm_table)
+        if a.wm_backend == "dynamo"
+        else LocalWatermarks(a.watermarks)
+    )
 
-    results = run(spark, a.dt,
-                  raw_dir=a.raw or storage.join(a.lake, "raw"),
-                  lake_dir=a.lake, rules_path=a.rules, watermarks=wm,
-                  clean_dir=a.clean, quarantine_dir=a.quarantine)
+    results = run(
+        spark,
+        a.dt,
+        raw_dir=a.raw or storage.join(a.lake, "raw"),
+        lake_dir=a.lake,
+        rules_path=a.rules,
+        watermarks=wm,
+        clean_dir=a.clean,
+        quarantine_dir=a.quarantine,
+    )
 
     print(f"\n=== clean_daily {a.dt} ===")
-    print(f"{'table':<36}{'total':>8}{'clean':>8}{'quarantined':>13}{'pct':>8}{'warned':>8}")
+    print(
+        f"{'table':<36}{'total':>8}{'clean':>8}{'quarantined':>13}{'pct':>8}{'warned':>8}"
+    )
     for r in results:
-        print(f"{r['table']:<36}{r['total']:>8,}{r['clean']:>8,}"
-              f"{r['quarantined']:>13,}{r['pct']:>7.2f}%{r['warned']:>8,}")
+        print(
+            f"{r['table']:<36}{r['total']:>8,}{r['clean']:>8,}"
+            f"{r['quarantined']:>13,}{r['pct']:>7.2f}%{r['warned']:>8,}"
+        )
         if r["by_reason"]:
             print(f"    reasons: {r['by_reason']}")
         if r["dups_dropped"]:
