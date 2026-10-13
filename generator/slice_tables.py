@@ -64,20 +64,13 @@ def main():
     ]
 
     cust = pd.read_csv(src / "olist_customers_dataset.csv")
-    snap = (
-        orders[["order_id", "customer_id", "order_purchase_timestamp", "day"]]
-        .merge(cust, on="customer_id")
-        .sort_values("order_purchase_timestamp")
-        .drop_duplicates(["customer_unique_id", "day"], keep="last")
-        .rename(
-            columns={
-                "customer_zip_code_prefix": "zip",
-                "customer_city": "city",
-                "customer_state": "state",
-                "day": "effective_date",
-            }
-        )[["customer_unique_id", "zip", "city", "state", "effective_date"]]
-    )
+    # One row per order: customer_id (per order) -> customer_unique_id (the person) + the address used.
+    # customer_id comes FIRST because the clean job reads CSV columns by position.
+    snap = (orders[["customer_id", "day"]]
+            .merge(cust, on="customer_id")
+            .rename(columns={"customer_zip_code_prefix": "zip", "customer_city": "city",
+                             "customer_state": "state", "day": "effective_date"})
+            [["customer_id", "customer_unique_id", "zip", "city", "state", "effective_date"]])
     snap["day"] = snap["effective_date"]
 
     days = sorted(pd.date_range(a.start, a.end).strftime("%Y-%m-%d"))
