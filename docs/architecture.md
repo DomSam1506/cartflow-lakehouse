@@ -137,3 +137,17 @@ erDiagram
 Design notes: facts hold `customer_sk` so each order points at the customer's address *at order time*.
 Validity is half-open (`valid_from <= d < valid_to`). The database enforces one current row per person.
 Sessions have no FK to `dim_customer`, because most browsing people never ordered in the replay window.
+
+## Day 5: Gold layer and warehouse
+
+Flow: clean zone -> `build_gold` (Spark, one ingest day) -> gold Parquet -> `warehouse.load_day`
+(staging -> dimensions -> facts -> invariant checks, one transaction) -> Postgres star schema.
+
+- Gold builders are pure DataFrame functions, unit-tested on tiny frames.
+- Business day = Brazil calendar date (clean timestamps are UTC, converted back for reporting).
+- Sessions are recomputed from all events up to the day, so a late event completes an earlier session.
+- Loads are MERGEs guarded by `IS DISTINCT FROM`, so re-running a day writes nothing.
+- `dim_customer` is SCD Type 2 with half-open validity ranges. The database enforces one current row
+  per person and valid ranges. Facts store `customer_sk`, the address valid at order time.
+- Every load ends with 8 invariant checks inside the same transaction; any violation rolls the day back.
+- Reconciliation against the original Olist files: 9 of 9 checks PASS. Window: 4,381 orders, 135,349 sessions.
