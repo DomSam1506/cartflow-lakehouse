@@ -85,3 +85,69 @@ Quarantine by reason: duplicate event_id 1,974; bad event_type 266; null/bad eve
 - No alarm or dead letter queue on failed runs.
 - Foreign-key checks are deferred to gold, because the static dimension tables ship only on day 1.
 - Gold layer (star schema, SCD2, MERGE) starts on Day 5.
+
+
+
+## Gold star schema
+
+Grain: `fact_orders` = one row per order. `fact_order_items` = one row per item in an order.
+`fact_sessions` = one row per browsing session. `dim_customer` = one row per person per address period (SCD2).
+
+```mermaid
+erDiagram
+    dim_date ||--o{ fact_orders : order_date
+    dim_date ||--o{ fact_order_items : order_date
+    dim_date ||--o{ fact_sessions : session_date
+    dim_customer ||--o{ fact_orders : customer_sk
+    dim_customer ||--o{ fact_order_items : customer_sk
+    dim_product ||--o{ fact_order_items : product_id
+    dim_seller ||--o{ fact_order_items : seller_id
+    fact_orders ||--o{ fact_order_items : order_id
+
+    dim_customer {
+        bigint customer_sk PK
+        varchar customer_unique_id
+        varchar zip
+        date valid_from
+        date valid_to
+        boolean is_current
+    }
+    fact_orders {
+        varchar order_id PK
+        bigint customer_sk FK
+        date order_date FK
+        varchar order_status
+        numeric payment_value
+    }
+    fact_order_items {
+        varchar order_id PK
+        int order_item_id PK
+        varchar product_id FK
+        varchar seller_id FK
+        numeric price
+    }
+    fact_sessions {
+        varchar session_id PK
+        date session_date FK
+        varchar furthest_stage
+        boolean purchased
+    }
+```
+
+Design notes: facts hold `customer_sk` so each order points at the customer's address *at order time*.
+Validity is half-open (`valid_from <= d < valid_to`). The database enforces one current row per person.
+Sessions have no FK to `dim_customer`, because most browsing people never ordered in the replay window.
+
+## Day 5: Gold layer and warehouse
+
+Flow: clean zone -> `build_gold` (Spark, one ingest day) -> gold Parquet -> `warehouse.load_day`
+(staging -> dimensions -> facts -> invariant checks, one transaction) -> Postgres star schema.
+
+- Gold builders are pure DataFrame functions, unit-tested on tiny frames.
+- Business day = Brazil calendar date (clean timestamps are UTC, converted back for reporting).
+- Sessions are recomputed from all events up to the day, so a late event completes an earlier session.
+- Loads are MERGEs guarded by `IS DISTINCT FROM`, so re-running a day writes nothing.
+- `dim_customer` is SCD Type 2 with half-open validity ranges. The database enforces one current row
+  per person and valid ranges. Facts store `customer_sk`, the address valid at order time.
+- Every load ends with 8 invariant checks inside the same transaction; any violation rolls the day back.
+- Reconciliation against the original Olist files: 9 of 9 checks PASS. Window: 4,381 orders, 135,349 sessions.

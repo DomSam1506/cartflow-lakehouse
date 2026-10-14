@@ -228,3 +228,4 @@ data/
 *.tfvars
 .env
 __pycache__/
+.venv/

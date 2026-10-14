@@ -51,13 +51,9 @@ SCHEMAS = {
         ("review_creation_date", T),
         ("review_answer_timestamp", T),
     ),
-    "customer_snapshots": _schema(
-        ("customer_unique_id", S),
-        ("zip", S),
-        ("city", S),
-        ("state", S),
-        ("effective_date", S),
-    ),
+        "customer_snapshots": _schema(
+        ("customer_id", S), ("customer_unique_id", S), ("zip", S), ("city", S), ("state", S),
+        ("effective_date", S)),
     "products": _schema(
         ("product_id", S),
         ("product_category_name", S),

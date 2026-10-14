@@ -1,0 +1,19 @@
+services:
+  warehouse:
+    image: postgres:16
+    container_name: cartflow-warehouse
+    environment:
+      POSTGRES_USER: cartflow
+      POSTGRES_PASSWORD: cartflow
+      POSTGRES_DB: cartflow
+    ports:
+      - "5433:5432"
+    volumes:
+      - warehouse-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cartflow"]
+      interval: 5s
+      retries: 10
+
+volumes:
+  warehouse-data:
