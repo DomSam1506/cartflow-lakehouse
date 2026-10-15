@@ -229,3 +229,8 @@ data/
 .env
 __pycache__/
 .venv/
+
+# Terraform
+infra/tfplan
+infra/.terraform/
+*.tfstate*
