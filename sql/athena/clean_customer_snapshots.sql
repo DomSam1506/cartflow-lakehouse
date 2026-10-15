@@ -1,4 +1,5 @@
 CREATE EXTERNAL TABLE IF NOT EXISTS cartflow.clean_customer_snapshots (
+  `customer_id` string,
   `customer_unique_id` string,
   `zip` string,
   `city` string,
