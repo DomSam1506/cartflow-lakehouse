@@ -138,16 +138,135 @@ Design notes: facts hold `customer_sk` so each order points at the customer's ad
 Validity is half-open (`valid_from <= d < valid_to`). The database enforces one current row per person.
 Sessions have no FK to `dim_customer`, because most browsing people never ordered in the replay window.
 
-## Day 5: Gold layer and warehouse
+## Day 5: gold layer and star schema
 
-Flow: clean zone -> `build_gold` (Spark, one ingest day) -> gold Parquet -> `warehouse.load_day`
-(staging -> dimensions -> facts -> invariant checks, one transaction) -> Postgres star schema.
+### Flow
 
-- Gold builders are pure DataFrame functions, unit-tested on tiny frames.
-- Business day = Brazil calendar date (clean timestamps are UTC, converted back for reporting).
-- Sessions are recomputed from all events up to the day, so a late event completes an earlier session.
-- Loads are MERGEs guarded by `IS DISTINCT FROM`, so re-running a day writes nothing.
-- `dim_customer` is SCD Type 2 with half-open validity ranges. The database enforces one current row
-  per person and valid ranges. Facts store `customer_sk`, the address valid at order time.
-- Every load ends with 8 invariant checks inside the same transaction; any violation rolls the day back.
-- Reconciliation against the original Olist files: 9 of 9 checks PASS. Window: 4,381 orders, 135,349 sessions.
+```
+clean Parquet (local lake)
+        |  glue_jobs/build_gold.py  (Spark, session timezone UTC, Parquet TIMESTAMP_MILLIS)
+        v
+data/local_lake/gold/<table>/dt=YYYY-MM-DD/*.parquet
+   fact_orders  fact_order_items  fact_sessions  customer_feed  dim_product  dim_seller
+        |  warehouse/load_day.py  (DuckDB reads Parquet, TimeZone pinned to UTC)
+        v
+Postgres 16 (docker compose)  UNLOGGED stg_* tables with primary keys
+        |  ONE transaction per day
+        |  1. dimensions: dim_product, dim_seller (Type 1 MERGE), dim_customer (Type 2)
+        |  2. facts: MERGE with point-in-time customer_sk lookup
+        |  3. 8 invariant checks; any violation rolls the whole day back
+        v
+star schema: dim_date, dim_customer, dim_product, dim_seller, fact_orders, fact_order_items, fact_sessions
+```
+
+### Model
+
+| Table | Grain | Notes |
+|---|---|---|
+| `fact_orders` | one row per order | statuses, timestamps (UTC), `delivered_late` (NULL until delivered), item, freight and payment totals |
+| `fact_order_items` | one row per order item | price and freight; carries the customer version valid on the order date |
+| `fact_sessions` | one row per browsing session | reached flags: viewed, carted, checkout_started, purchased |
+| `dim_customer` | one row per person per address period (Type 2) | `valid_from <= d < valid_to`, `valid_to` NULL while current |
+| `dim_product`, `dim_seller` | one row per entity (Type 1) | overwritten in place, no history |
+| `dim_date` | one row per calendar day, 852 rows | 2016-09-01 to 2018-12-31, `is_black_friday` flag |
+
+### Key decisions
+
+- **Constraints live in the database.** `dim_customer` has half-open validity, a partial unique index (one current row per person), CHECKs (`valid_to > valid_from`, `is_current = (valid_to IS NULL)`) and `UNIQUE (customer_unique_id, valid_from)`. A buggy loader fails loudly instead of corrupting history.
+- **Idempotent `MERGE`.** Matched rows are rewritten only when something changed (`IS DISTINCT FROM`), so re-running a day changes nothing. A reload test proves it.
+- **Point-in-time lookup.** Facts take the customer version valid on the order date, so a later address change never rewrites history.
+- **Business day is the Brazil date.** Storage is UTC; day logic converts. A check confirms zero orders fall outside their Brazil-day window.
+- **Sessions are recomputed, not appended.** For every session touched on day D, the gold job recomputes it from all events up to D, so a late event that completes yesterday's session yields a complete row that the warehouse replaces wholesale.
+- **Reached semantics** keep the funnel monotone even if an intermediate event was quarantined.
+- **Customer feed carries `customer_id`.** The snapshot feed is one row per order, so every order links to a person. Found when orders failed to link; fixed in the slicer and schema (CSV columns are read by position).
+
+### Results (verified)
+
+| Check | Result |
+|---|---|
+| Rows | 4,380 orders, 5,062 items, 135,349 sessions, 32,951 products, 3,095 sellers |
+| Customers | 4,322 dimension rows for 4,321 people: one real address change tracked as Type 2 |
+| Tests | 47 passing in total, including 11 warehouse tests (throw-away schema) and 8 gold-builder tests |
+| Reconciliation | Three-way (raw, clean, warehouse). One delivered order has no delivery date, so the quality rule quarantined it; the check lists it and quantifies the difference (items 574,136.76 vs 574,019.46) |
+| Idempotency | Reloading a day leaves every count unchanged |
+
+### Known limits
+
+- Sessions are replaced wholesale, so the load is **order-dependent**: replaying an older day after newer ones can regress a session. See Day 6.
+- The warehouse is local Postgres in Docker, not a managed service. Redshift was a one-off (Day 6).
+
+---
+
+## Day 6: AWS analytics, Redshift Serverless and dashboards
+
+### Flow
+
+```
+S3 clean (Parquet) --> Athena raw-vs-clean benchmark --> docs/benchmark.md
+gold Parquet --aws s3 sync (parquet only)--> S3 gold
+        |  warehouse/load_day_redshift.py  (Redshift Data API, no VPC access needed)
+        |  per day, ONE transaction: DELETE staging, COPY ... FORMAT AS PARQUET, dims, facts
+        |  then a separate invariant-check statement
+        v
+Redshift Serverless (4 RPU base)  --reconcile_redshift.py-->  Postgres (14 checks)
+        |
+        v  terraform apply  (enable_redshift defaults to false)  =  teardown
+
+Postgres star schema --> Metabase dashboards (docs/img/dashboard.png)
+```
+
+### Components
+
+| Piece | Choice | Notes |
+|---|---|---|
+| Athena benchmark | raw JSON/CSV tables vs clean Parquet | Same four queries, median of 3 runs, bytes scanned from `get-query-execution` |
+| Redshift | Serverless namespace and workgroup, 4 RPU base | Created by Terraform behind `enable_redshift`; a monthly usage limit of 40 RPU-hours deactivates compute |
+| Loader | boto3 `redshift-data` | Batch of 1 to 40 statements runs as one transaction |
+| Dashboards | Metabase in Docker on the local Postgres warehouse | QuickSight is denied by the sandbox account's service control policy |
+
+### What changes from Postgres to Redshift
+
+| Postgres | Redshift | Why |
+|---|---|---|
+| `GENERATED ALWAYS AS IDENTITY` | `IDENTITY(1,1)` | syntax |
+| PK, UNIQUE, CHECK, partial unique index | PK/UNIQUE informational only; no CHECK, no partial index | not enforced, so the invariant checks are the only guard |
+| UNLOGGED staging, `TRUNCATE` | plain tables emptied with `DELETE` | `TRUNCATE` commits implicitly and would break the transaction |
+| `MERGE ... WHEN MATCHED AND (...) IS DISTINCT FROM (...)` | `MERGE ... WHEN MATCHED THEN UPDATE` | no `AND` condition on `WHEN`; matched rows are always rewritten, still idempotent |
+| `IS DISTINCT FROM` in SCD2 | `COALESCE(a,'~') <> COALESCE(b,'~')` | not documented for Redshift |
+| `FILTER (WHERE ...)` | `SUM(CASE WHEN ...)` | not available |
+| COPY by column name via DuckDB | COPY Parquet **by position** | staging column order must equal the Parquet order |
+| indexes | `DISTKEY` / `SORTKEY` / `DISTSTYLE ALL` | the two order facts share `DISTKEY(order_id)` so their join is co-located; dimensions are copied to every node; fact tables sorted by date |
+
+### Key decisions
+
+- **One switch for cost.** Every Redshift resource has `count = var.enable_redshift ? 1 : 0`. `terraform apply -var enable_redshift=true` builds it; a plain `terraform apply` destroys it, which is hard to get wrong.
+- **Hard spending guard.** A usage limit stops compute after 40 RPU-hours in a month. A budget alert covers everything else.
+- **Upload only Parquet to S3.** Spark also writes `_SUCCESS` and `.crc` files, and COPY reads every object under a prefix.
+- **Independent verification.** A reconciliation script compares counts and money totals between Postgres and Redshift, because Redshift does not enforce constraints.
+
+### Results (verified)
+
+| Check | Result |
+|---|---|
+| Athena, one day, events by type | 5.07 MB raw, 0.01 MB clean (over 99% less) |
+| Athena, whole-window funnel | 19.22 MB raw, 6.84 MB clean (64% less) |
+| Athena, mobile events per day | 19.22 MB raw, 0.06 MB clean (over 99% less) |
+| Athena, revenue by status (join) | 0.55 MB raw, 0.32 MB clean (42% less) |
+| Postgres vs Redshift | 14 checks, ALL MATCH (counts and money totals to the cent) |
+| Teardown | `list-workgroups` and `list-namespaces` both empty in us-east-2 |
+| Glue | 26 runs of `cartflow-clean-daily` recorded in total; every run visible in the run-history screenshot succeeded |
+| Total AWS cost | $0.68 |
+
+The benchmark mixes compression, columnar and typing effects on tiny data, and Athena bills 10 MB minimum per query, so the ratio is the claim, not a dollar saving.
+
+### What the reconciliation caught
+
+1. **A skipped day.** The loader found its list of days from `fact_orders` only. 2017-12-01 has late-arriving sessions but no orders, so it was skipped and sessions were 129 short (purchased sessions 42 short).
+2. **Order dependence.** After fixing it, 35 purchased sessions were still stale: re-loading 2017-11-24 after later days had overwritten newer session versions. All 35 were from that day, and the Redshift copies had fewer events and an earlier `session_end`. Replaying all days in date order produced ALL MATCH.
+
+### Known limits
+
+- **Order-dependent session loads.** Safe in date order. A version guard (drop staged sessions with fewer events than the stored row) would make any order safe; not implemented.
+- **Redshift was a one-off** and cannot run in CI. The Redshift SQL and loader are verified by the reconciliation, not by automated tests.
+- **Dashboards use local Postgres**, not QuickSight, because the account's service control policy denies it.
+- Category names include upstream Olist typos and an `unknown` bucket.

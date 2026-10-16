@@ -44,6 +44,8 @@ All numbers come from the committed evidence in `docs/` and the reconciliation s
 
 **Pipeline.** 12 simulated daily loads (20 Nov to 1 Dec 2017). Clean layer: 197,639 events. Quarantine: 2,979 events. Glue runs take about 1.5 minutes on 2 DPUs ([run history](docs/img/glue_runs.png)).
 
+**Cost.** The whole AWS build cost $0.68, across 26 Glue runs, Athena queries and the Redshift Serverless load.
+
 **Warehouse.** 4,380 orders, 5,062 order items, 135,349 sessions, 4,321 customers (4,322 dimension rows: one real customer changed address and is tracked as a Type 2 change), 32,951 products, 3,095 sellers.
 
 **Reconciliation.** Postgres and Redshift agree on all 14 checks: row counts and money totals to the cent ([screenshot](docs/img/redshift_reconcile.png)). A separate three-way check traces each order from raw to clean to warehouse and lists the rejected ones: one delivered order has no delivery date, so a quality rule quarantined it, and the check shows the exact money difference that causes.
@@ -95,11 +97,15 @@ python -m pip install -r requirements.txt
 pytest                                          # 47 tests; the warehouse tests skip if Postgres is down
 
 # --- local pipeline ---
-# [fill in: generate events, slice tables, run the clean job locally]
+python generator/gen_events.py                  # seeded synthetic clickstream (defaults: 2017-11-20 to 2017-11-30)
+python generator/slice_tables.py                # slice the Olist tables into one folder per day
+python generator/replay.py --all --target local # ship every day to the local raw zone, _READY marker last
+for d in $(ls data/local_lake/raw | sed 's/dt=//' | sort); do
+  python -m glue_jobs.clean_daily --dt "$d"     # clean job, one day at a time (idempotent)
+done
 
 docker compose up -d                            # Postgres warehouse (port 5433) and Metabase (port 3000)
-bash scripts/gold_all.sh                        # build gold Parquet for every day
-python -m warehouse.load_day --all              # load the star schema (needs the venv's psycopg)
+bash scripts/gold_all.sh                        # per day: build gold Parquet, then load the star schema
 python scripts/reconcile.py                     # raw vs clean vs warehouse
 
 # --- AWS (region us-east-2) ---
